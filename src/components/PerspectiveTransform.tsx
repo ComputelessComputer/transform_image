@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from "react";
 
 interface Point {
   x: number;
@@ -11,13 +11,85 @@ interface PerspectiveTransformProps {
 
 declare const cv: any;
 
-const PerspectiveTransform: React.FC<PerspectiveTransformProps> = ({ imageFile }) => {
+const PerspectiveTransform: React.FC<PerspectiveTransformProps> = ({
+  imageFile,
+}) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imageUrlRef = useRef<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [points, setPoints] = useState<Point[]>([]);
   const [selectedPoint, setSelectedPoint] = useState<number | null>(null);
-  const [imageLoaded, setImageLoaded] = useState(false);
+  const [_, setImageLoaded] = useState(false);
+
+  // Cleanup function for URL.createObjectURL
+  useEffect(() => {
+    return () => {
+      if (imageUrlRef.current) {
+        URL.revokeObjectURL(imageUrlRef.current);
+      }
+    };
+  }, []);
+
+  const drawImage = useCallback((img: HTMLImageElement) => {
+    if (!canvasRef.current) return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d")!;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0);
+  }, []);
+
+  const warpPerspective = useCallback(() => {
+    if (!canvasRef.current || points.length !== 4) return;
+
+    const canvas = canvasRef.current;
+
+    try {
+      // Create source and target points
+      const srcPoints = new cv.Mat(4, 1, cv.CV_32FC2);
+      const dstPoints = new cv.Mat(4, 1, cv.CV_32FC2);
+      const src = cv.imread(canvas);
+      const dst = new cv.Mat();
+      const matrix = cv.getPerspectiveTransform(srcPoints, dstPoints);
+
+      try {
+        srcPoints.data32F.set([
+          0,
+          0,
+          canvas.width - 1,
+          0,
+          canvas.width - 1,
+          canvas.height - 1,
+          0,
+          canvas.height - 1,
+        ]);
+
+        const flatPoints = points.flatMap((p) => [p.x, p.y]);
+        dstPoints.data32F.set(flatPoints);
+
+        // Apply perspective transform
+        cv.warpPerspective(
+          src,
+          dst,
+          matrix,
+          new cv.Size(canvas.width, canvas.height)
+        );
+
+        // Show result on canvas
+        cv.imshow(canvas, dst);
+      } finally {
+        // Clean up OpenCV resources
+        src.delete();
+        dst.delete();
+        matrix.delete();
+        srcPoints.delete();
+        dstPoints.delete();
+      }
+    } catch (error) {
+      console.error("Error in warpPerspective:", error);
+    }
+  }, [points]);
 
   useEffect(() => {
     const processImage = async () => {
@@ -28,7 +100,10 @@ const PerspectiveTransform: React.FC<PerspectiveTransformProps> = ({ imageFile }
 
       try {
         const img = new Image();
-        const imageUrl = URL.createObjectURL(imageFile);
+        if (imageUrlRef.current) {
+          URL.revokeObjectURL(imageUrlRef.current);
+        }
+        imageUrlRef.current = URL.createObjectURL(imageFile);
 
         img.onload = () => {
           const canvas = canvasRef.current!;
@@ -40,7 +115,7 @@ const PerspectiveTransform: React.FC<PerspectiveTransformProps> = ({ imageFile }
             { x: 0, y: 0 },
             { x: img.width - 1, y: 0 },
             { x: img.width - 1, y: img.height - 1 },
-            { x: 0, y: img.height - 1 }
+            { x: 0, y: img.height - 1 },
           ]);
 
           drawImage(img);
@@ -49,113 +124,70 @@ const PerspectiveTransform: React.FC<PerspectiveTransformProps> = ({ imageFile }
         };
 
         img.onerror = () => {
-          setError('Failed to load image');
+          setError("Failed to load image");
           setIsProcessing(false);
         };
 
-        img.src = imageUrl;
+        img.src = imageUrlRef.current;
       } catch (err) {
-        setError('Error processing image: ' + (err instanceof Error ? err.message : String(err)));
+        setError(
+          "Error processing image: " +
+            (err instanceof Error ? err.message : String(err))
+        );
         setIsProcessing(false);
       }
     };
 
     processImage();
-  }, [imageFile]);
+  }, [imageFile, drawImage]);
 
-  const drawImage = (img: HTMLImageElement) => {
-    if (!canvasRef.current) return;
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (!canvasRef.current) return;
 
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d')!;
+      const rect = canvasRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
 
-    // Draw the original image
-    ctx.drawImage(img, 0, 0);
-  };
+      // Check if click is close to a point
+      points.forEach((point, index) => {
+        if (Math.abs(x - point.x) < 20 && Math.abs(y - point.y) < 20) {
+          setSelectedPoint(index);
+        }
+      });
+    },
+    [points]
+  );
 
-  const warpPerspective = () => {
-    if (!canvasRef.current || points.length !== 4) return;
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (selectedPoint === null || !canvasRef.current || !imageUrlRef.current)
+        return;
 
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d')!;
+      const rect = canvasRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
 
-    // Create source and target points
-    const srcPoints = new cv.Mat(4, 1, cv.CV_32FC2);
-    srcPoints.data32F.set([
-      0, 0,
-      canvas.width - 1, 0,
-      canvas.width - 1, canvas.height - 1,
-      0, canvas.height - 1
-    ]);
+      setPoints((prevPoints) => {
+        const newPoints = [...prevPoints];
+        newPoints[selectedPoint] = { x, y };
+        return newPoints;
+      });
 
-    const dstPoints = new cv.Mat(4, 1, cv.CV_32FC2);
-    const flatPoints = points.flatMap(p => [p.x, p.y]);
-    dstPoints.data32F.set(flatPoints);
+      // Use the cached image URL for redrawing
+      const img = new Image();
+      img.onload = () => {
+        drawImage(img);
+        warpPerspective();
+      };
+      img.src = imageUrlRef.current;
+    },
+    [selectedPoint, drawImage, warpPerspective]
+  );
 
-    // Get the perspective transform matrix
-    const matrix = cv.getPerspectiveTransform(srcPoints, dstPoints);
-
-    // Create source and destination Mats
-    const src = cv.imread(canvas);
-    const dst = new cv.Mat();
-
-    // Apply perspective transform
-    cv.warpPerspective(
-      src,
-      dst,
-      matrix,
-      new cv.Size(canvas.width, canvas.height)
-    );
-
-    // Show result on canvas
-    cv.imshow(canvas, dst);
-
-    // Clean up
-    src.delete();
-    dst.delete();
-    matrix.delete();
-    srcPoints.delete();
-    dstPoints.delete();
-  };
-
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!canvasRef.current) return;
-
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    // Check if click is close to a point
-    points.forEach((point, index) => {
-      if (Math.abs(x - point.x) < 20 && Math.abs(y - point.y) < 20) {
-        setSelectedPoint(index);
-      }
-    });
-  };
-
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (selectedPoint === null || !canvasRef.current) return;
-
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    const newPoints = [...points];
-    newPoints[selectedPoint] = { x, y };
-    setPoints(newPoints);
-
-    // Redraw
-    const img = new Image();
-    img.onload = () => {
-      drawImage(img);
-      warpPerspective();
-    };
-    img.src = URL.createObjectURL(imageFile);
-  };
-
-  const handleMouseUp = () => {
+  const handleMouseUp = useCallback(() => {
     setSelectedPoint(null);
-  };
+  }, []);
 
   return (
     <div className="relative">
@@ -172,11 +204,7 @@ const PerspectiveTransform: React.FC<PerspectiveTransformProps> = ({ imageFile }
           Processing...
         </div>
       )}
-      {error && (
-        <div className="mt-2 text-red-500">
-          {error}
-        </div>
-      )}
+      {error && <div className="mt-2 text-red-500">{error}</div>}
     </div>
   );
 };
