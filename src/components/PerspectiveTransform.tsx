@@ -99,41 +99,50 @@ const PerspectiveTransform: React.FC<PerspectiveTransformProps> = ({
       setError(null);
 
       try {
+        // Validate image file
+        if (!imageFile.type.startsWith('image/')) {
+          throw new Error('Invalid file type. Please select an image file.');
+        }
+
+        // Create and load image
         const img = new Image();
+        
+        // Clean up previous object URL
         if (imageUrlRef.current) {
           URL.revokeObjectURL(imageUrlRef.current);
         }
-        imageUrlRef.current = URL.createObjectURL(imageFile);
+        
+        // Create new object URL
+        const objectUrl = URL.createObjectURL(imageFile);
+        imageUrlRef.current = objectUrl;
 
-        img.onload = () => {
-          const canvas = canvasRef.current!;
-          canvas.width = img.width;
-          canvas.height = img.height;
+        // Wrap image loading in a promise
+        await new Promise((resolve, reject) => {
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error('Failed to load image. Please try again with a different image.'));
+          img.src = objectUrl;
+        });
 
-          // Initialize corner points
-          setPoints([
-            { x: 0, y: 0 },
-            { x: img.width - 1, y: 0 },
-            { x: img.width - 1, y: img.height - 1 },
-            { x: 0, y: img.height - 1 },
-          ]);
+        // Set canvas dimensions and initialize points
+        const canvas = canvasRef.current!;
+        canvas.width = img.width;
+        canvas.height = img.height;
 
-          drawImage(img);
-          setImageLoaded(true);
-          setIsProcessing(false);
-        };
+        setPoints([
+          { x: 0, y: 0 },
+          { x: img.width - 1, y: 0 },
+          { x: img.width - 1, y: img.height - 1 },
+          { x: 0, y: img.height - 1 },
+        ]);
 
-        img.onerror = () => {
-          setError("Failed to load image");
-          setIsProcessing(false);
-        };
-
-        img.src = imageUrlRef.current;
+        drawImage(img);
+        setImageLoaded(true);
+        setError(null); // Explicitly clear any error state on successful load
       } catch (err) {
-        setError(
-          "Error processing image: " +
-            (err instanceof Error ? err.message : String(err))
-        );
+        console.error('Image processing error:', err);
+        setImageLoaded(false);
+        setError(err instanceof Error ? err.message : 'Failed to process image');
+      } finally {
         setIsProcessing(false);
       }
     };
