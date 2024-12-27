@@ -100,18 +100,18 @@ const PerspectiveTransform: React.FC<PerspectiveTransformProps> = ({
 
       try {
         // Validate image file
-        if (!imageFile.type.startsWith('image/')) {
-          throw new Error('Invalid file type. Please select an image file.');
+        if (!imageFile.type.startsWith("image/")) {
+          throw new Error("Invalid file type. Please select an image file.");
         }
 
         // Create and load image
         const img = new Image();
-        
+
         // Clean up previous object URL
         if (imageUrlRef.current) {
           URL.revokeObjectURL(imageUrlRef.current);
         }
-        
+
         // Create new object URL
         const objectUrl = URL.createObjectURL(imageFile);
         imageUrlRef.current = objectUrl;
@@ -119,7 +119,12 @@ const PerspectiveTransform: React.FC<PerspectiveTransformProps> = ({
         // Wrap image loading in a promise
         await new Promise((resolve, reject) => {
           img.onload = () => resolve(img);
-          img.onerror = () => reject(new Error('Failed to load image. Please try again with a different image.'));
+          img.onerror = () =>
+            reject(
+              new Error(
+                "Failed to load image. Please try again with a different image."
+              )
+            );
           img.src = objectUrl;
         });
 
@@ -139,9 +144,11 @@ const PerspectiveTransform: React.FC<PerspectiveTransformProps> = ({
         setImageLoaded(true);
         setError(null); // Explicitly clear any error state on successful load
       } catch (err) {
-        console.error('Image processing error:', err);
+        console.error("Image processing error:", err);
         setImageLoaded(false);
-        setError(err instanceof Error ? err.message : 'Failed to process image');
+        setError(
+          err instanceof Error ? err.message : "Failed to process image"
+        );
       } finally {
         setIsProcessing(false);
       }

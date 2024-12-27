@@ -1,6 +1,7 @@
 import { useState } from "react";
 import ImageUpload from "./components/ImageUpload";
 import PerspectiveTransform from "./components/PerspectiveTransform";
+import KonvaExample from "./components/KonvaExample";
 
 function App() {
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
